@@ -1,0 +1,256 @@
+####################################################################
+#	R script of grm function. grm fits a generalized linear model using the Iterated Weighted Least Squares method 
+# given data that are geometrically distributed
+#       ========================================================
+#
+#       Structure of script:
+#       --------------------
+#       1. Function input check
+#       2. Iterated Weighted Least Squares(IWLS) method
+#       3. Store estimates, compute statistics and graphicall elements
+#       4. Tabulate summary statistics
+#       5. Diagnostic Plots
+#       6. List fitted model components and metrics
+#      
+####################################################################
+
+
+grm <- function(y, X, startval) {
+  
+#   grm standing for geometric regression model takes an input vector y of geometric responses,
+#   a covariate matrix X assumed too have some effect on the responses and startval vector containing
+#   an initial guess of the coefficients of the linear predictor eta being linked to the random component
+#   via the link function ln(mu-1) = eta 
+
+#   the function outputs a table of the estimated coefficients, their standard error, their associated z-score, and p-values.
+#   moreover, it outputs diagnostic plots to assess the assumption  of the specified model and suggest strategy alterations.
+#   finally, it outputs a list of elements 
+
+  
+## 1. Input checks ##
+  
+  # check that y,X,startval are specified by the user ; 
+  # if startval not specified let it be equal to vector of zeros with length equal to the  columns of X
+  
+  if (missing(y)) {
+    stop("argument y is not specified")
+  }
+  
+  if (missing(X)) {
+    stop("argument X is not specified")
+  }
+  
+  if (missing(startval)) {
+    startval<-vector(mode = "numeric",length = ncol(X))
+  }
+  
+  # Check that class of y,X,startval is valid
+  
+  if (class(y)!="numeric") {
+    stop("argument y needs to be a numeric vector")
+  }
+  
+  if (class(X)!="matrix") {
+    stop("argument X needs to be a matrix")
+  }
+  
+  if (class(startval)!="numeric") {
+    stop("argument startval needs to be a numeric vector")
+  }
+  
+  # Check that y,X,beta have valid elements
+  
+  if (any(is.na(y)) || any(is.nan(y)) || any(is.infinite(y) )) {
+    stop("argument  y contains missing and/or infinity values")
+  }
+  
+  if (any(is.na(X)) || any(is.nan(X)) || any(is.infinite(X) )) {
+    stop("argument  X contains missing and/or infinity values")
+  }
+  
+  if (any(is.na(startval)) || any(is.nan(startval)) || any(is.infinite(startval) )) {
+    stop("argument startval contains missing and/or infinity values")
+  }
+  
+  # Check dimensionality  of arguments is  proper
+  
+  if (length(y)!=nrow(X)) {
+    stop("row number of X should be equal to to length of y")
+  } 
+
+  if (ncol(X)!=length(startval)) {
+    stop("column number of X should be equal to to length of startval")
+  } 
+  
+
+# check if y is suitable for modelling via geometric distribution ; evaluate assumptions
+# check if data have support for geometric distribbution; i.e. are positive integers
+  
+  if (all(y>0)==FALSE && all(y%%1==0)==FALSE)  {
+    stop("response data not suitable for modelling with geometric distribution, y needs to be a positive integer")
+  }
+
+## 2. IWLS procedure ##
+  
+  # set initial values for the estimate of beta (betahat)
+  betahat <- startval
+  # set initial values for the score vector (U) for each parameter
+  U <- rep(10,length(startval))                       
+
+  # initialize iterative procedure
+  iter <- 0 
+  
+  # constraint iterarative procedure to an upper limit of 10^6 for the absolute value of the score function
+  while(sum(abs(U)) > 1e-6) {
+    
+    # define linear predictor (eta)
+    eta <- as.vector(X%*%betahat)
+    
+    # define dependance of geometric distribution  mean (mu) to the linear predictor (eta)
+    mu <- exp(eta)+1  
+    
+    # define dependance of geometric distribution  variance (V) to the mean (mu)
+    V <- (mu-1)*mu  
+    
+    # define weight vector (W)
+    W <- ((mu-1)^2)/V  
+    
+    #  define the adjusted response variable vector (z)
+    z <- eta + ( (y-mu)/(mu-1) )  
+    
+    # compute ith iteration betahat as given in notes
+    XW <- t(W*X)                  
+
+    XWX <- solve(XW%*%X) 
+    
+    XWz <- XW%*%z     
+    
+    U <- XW%*%(z-eta)
+    
+    betahat <- XWX%*%XWz   
+    
+    iter <- iter + 1              
+  }
+  
+## 3. Store estimated values from the IWLS and compute relevant statistics along with graphical elements ##
+  
+  # Store convergece values for the mean, variance, linear predictor, adjusted response variable, and estimated weight matrix
+  eta_hat <- as.vector(X%*%betahat)
+  
+  mu_hat <-  exp(eta_hat)+1
+  
+  V_hat <- (mu_hat-1)*mu_hat
+  
+  W_hat <- ((mu_hat-1)^2)/V_hat
+  
+  z_hat <- eta_hat + ( (y-mu_hat)/(mu_hat-1) )
+  
+  pi_hat<- 1/mu_hat
+  
+  # Compute variance-covariance matrix of the residuals denoted as the hat matrix H
+  
+  XW_hat <- t(W_hat*X)
+  
+  XWX_hat <- solve(XW_hat%*%X)
+  
+  H <- X %*% XWX_hat %*% XW_hat
+  
+  # extract residual variance and convert it to standard error; store it in vector h
+  h <- sqrt(diag(1-H))
+  
+  # fitted values
+  fitted <- mu_hat
+  
+  # residuals
+  resids <- y - fitted
+  
+  # pearson residuals
+  p_resids <- resids / V_hat
+  
+  # standardized pearson residuals
+  std_p_resids <- p_resids / h
+  
+  # covariance-matrix of the estimated regression coefficients
+  cov.beta <- XWX_hat
+
+  # standard error vector for each estimated regression coefficient
+  sebeta <- sqrt(diag(XWX_hat))
+  
+  # number coefficients estimated in eta
+  p <- length(betahat)
+  
+  # residual degrees of freedom
+  df.residuals<-length(y)-length(betahat)
+  
+  # Deviance calculation ; adjust components that can result in invalid values 
+  lc_epsilon <- (y-1)*log((y-1) / (fitted-1))
+  lc_epsilon[which(is.nan(lc_epsilon))]=0
+  lc_epsilon[which(is.infinite(lc_epsilon))]=0
+  lc_epsilon[which(is.na(lc_epsilon))]=0
+  
+  deviance <- 2*sum(lc_epsilon + y*log(fitted/y))
+  
+  # deviance residuals 
+  
+  d_resids<- sign(resids) * sqrt(lc_epsilon + y*log(fitted/y)) 
+  
+  # standardized deviance residuals
+  
+  std_d_resids<- d_resids / h
+  
+  # hypothesis testing for parameters
+  # calculate z-score and p-value for each parameter
+
+  z_score<-(betahat/sebeta)
+
+  p_value<-2*pnorm(-abs(z_score))
+  
+  # Cook's Distance via leverage expression
+  
+  Cooks_distance<-(1/p)*(std_p_resids^2)*(h/(1-h))
+  
+  
+## 4.Tabulate and print relevant statistics ##
+  
+  stat_table<-data.frame(betahat,sebeta,z_score,p_value)
+  print(stat_table)
+  print(paste("Number of estimated coefficients = ",p))
+  print(paste("Residual degrees of freedom = ",df.residuals))
+  print(paste("Model Deviance = ",deviance))
+  
+  
+## 5.Diagnostic plots ##
+  
+  par(mfrow=c(3,2))
+  
+  # deviance residuals vs linear predictor
+  
+  scatter.smooth(eta_hat,std_d_resids,xlab="Linear Predictor",ylab="Std. Deviance Residuals",main="Deviance Residuals vs Linear Predictor")
+  
+  # qq-plot for deviance residuals 
+  
+  qqnorm(d_resids)
+  qqline(d_resids)
+  
+  # serial autocorelation plot for independence 
+  
+  scatter.smooth((1:length(y)),d_resids,xlab="Index",ylab="Deviance Residuals",main="Residual Series")
+
+  # cook's distance vs observation index
+  
+  plot((1:length(y)),Cooks_distance,xlab = "Observation Number",ylab="Cook's Distance",main="Cook's Distance",type = "h")
+  
+  # standardized pearson residuals vs leverage
+  
+  scatter.smooth(diag(H),std_p_resids,xlab="Leverage",ylab="Std. Pearson Residuals",main="Pearson Residuals vs Leverage")
+  
+  # cook's distance vs leverage
+  
+  scatter.smooth(diag(H),Cooks_distance,xlab="Leverage",ylab="Cook's Distance",main="Cook's Distance vs Leverage")
+
+## 6. Output list ##
+
+return(list(y=y,fitted=fitted,betahat=betahat,sebeta=sebeta,cov.beta=cov.beta,p=p,df.residuals=df.residuals,deviance=deviance))
+
+
+}
